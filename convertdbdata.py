@@ -11,10 +11,20 @@ Move data from any databases. Not need any frameforks or mapped shemas.
 sqlite->postggres etc.
 """
 from sqlalchemy import create_engine, MetaData
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.types import DateTime, DATETIME
+from sqlalchemy.dialects.postgresql import base
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql.sqltypes import DECIMAL
+from sqlalchemy.types import BOOLEAN, DATETIME, DateTime, Float
+
+
+def hasattrdeep(obj, *names):
+    for name in names:
+        if not hasattr(obj, name):
+            return False
+        obj = getattr(obj, name)
+    return True
 
 
 def make_session(connection_string):
@@ -32,6 +42,7 @@ def quick_mapper(table):
 
 
 class Migrate(object):
+
     def __init__(self, from_db, to_db, at_first=[], only=[]):
         # engine, suppose it has two tables 'user' and 'address' set up
         self.session, self.engine = make_session(from_db)
@@ -68,10 +79,21 @@ class Migrate(object):
         for table in self.tables:
             columns = table.__table__.c
             for column in columns:
+                #if hasattrdeep(column, 'server_default', 'arg', 'text'):
+                #    column.server_default.arg.text = ''
+
                 if dialect_dst == 'postgresql':
                     # DATETIME->DateTime
                     if isinstance(column.type, DATETIME):
                         column.type = DateTime()
+                    # Boolean int->str
+                    if isinstance(column.type, BOOLEAN):
+                        if hasattrdeep(column, 'server_default', 'arg', 'text'):
+                            column.server_default = column.server_default.arg.text
+                if dialect == 'postgresql':
+                    # DOUBLE_PRECISION->Real
+                    if isinstance(column.type, base.DOUBLE_PRECISION):
+                        column.type = Float()
 
     def run(self):
         self.convert()
@@ -88,7 +110,8 @@ class Migrate(object):
                 print 'Transferring records to %s' % table.__table__.name
                 for record in self.session.query(table).all():
                     data = dict(
-                        [(str(column), getattr(record, column)) for column in columns]
+                        [(str(column), getattr(record, column))
+                         for column in columns]
                     )
                     NewRecord = quick_mapper(table.__table__)
                     self.session_dst.merge(NewRecord(**data))
